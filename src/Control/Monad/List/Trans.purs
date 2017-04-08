@@ -9,6 +9,7 @@ module Control.Monad.List.Trans
   , filter
   , foldl
   , foldl'
+  , foldlRec'
   , fromEffect
   , head
   , iterate
@@ -17,6 +18,8 @@ module Control.Monad.List.Trans
   , prepend
   , prepend'
   , repeat
+  , runListT
+  , runListTRec
   , scanl
   , singleton
   , tail
@@ -40,7 +43,7 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.MonadPlus (class MonadPlus)
 import Control.MonadZero (class MonadZero)
 import Control.Plus (class Plus)
-
+import Control.Monad.Rec.Class as MR
 import Data.Lazy (Lazy, defer, force)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Monoid (class Monoid)
@@ -66,9 +69,14 @@ data Step a s
   | Skip (Lazy s)
   | Done
 
--- | Run a computation in the `ListT` monad.
-runListT :: forall f a. ListT f a -> f (Step a (ListT f a))
-runListT (ListT fa) = fa
+-- | Drain a `ListT`, running it to completion and discarding all values.
+runListT :: forall f a. Monad f => ListT f a -> f Unit
+runListT = foldl' (\_ _ -> pure unit) unit
+
+-- | Drain a `ListT`, running it to completion and discarding all values.
+-- | Stack safe: Uses tail call optimization.
+runListTRec :: forall f a. MR.MonadRec f => ListT f a -> f Unit
+runListTRec = foldlRec' (\_ _ -> pure unit) unit
 
 -- | The empty list.
 nil :: forall f a. Applicative f => ListT f a
@@ -201,6 +209,15 @@ foldl' f = loop where
     where
     g Nothing             = pure b
     g (Just (Tuple a as)) = (f b a) >>= (flip loop as)
+
+-- | Fold a list from the left, accumulating the result (effectfully) using the specified function.
+-- | Uses tail call optimization.
+foldlRec' :: forall f a b. MR.MonadRec f => (b -> a -> f b) -> b -> ListT f a -> f b
+foldlRec' f = MR.tailRecM2 loop where
+  loop b l = uncons l >>= g
+    where
+    g Nothing             = pure (MR.Done b)
+    g (Just (Tuple a as)) = (f b a) >>= \b' -> pure (MR.Loop {a: b', b: as})
 
 -- | Fold a list from the left, accumulating the result using the specified function.
 foldl :: forall f a b. Monad f => (b -> a -> b) -> b -> ListT f a -> f b
